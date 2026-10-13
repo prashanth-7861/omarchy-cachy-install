@@ -17,9 +17,10 @@ log "Capturing Omarchy config to $BACKUP_DIR"
 log "Backing up Hyprland config..."
 cp -r ~/.config/hypr "$BACKUP_DIR/hypr"
 
-# Omarchy configs
-log "Backing up Omarchy config..."
-cp -r ~/.config/omarchy "$BACKUP_DIR/omarchy"
+# Omarchy configs (excluding system themes - they're in /usr/share/omarchy/themes)
+log "Backing up Omarchy config (excluding themes)..."
+mkdir -p "$BACKUP_DIR/omarchy"
+rsync -a ~/.config/omarchy/ "$BACKUP_DIR/omarchy/" --exclude='themes/' --exclude='themed/'
 
 # Terminal configs
 for term in foot kitty alacritty ghostty; do
@@ -83,7 +84,7 @@ if [[ -d "$BACKUP_DIR/hypr" ]]; then
     cp -r "$BACKUP_DIR/hypr" ~/.config/
 fi
 
-# Restore Omarchy
+# Restore Omarchy (themes come from system packages, not backup)
 if [[ -d "$BACKUP_DIR/omarchy" ]]; then
     log "Restoring Omarchy config..."
     rm -rf ~/.config/omarchy
@@ -154,14 +155,14 @@ User: $USER
 
 ## Contents
 - \`hypr/\` - Hyprland window manager config
-- \`omarchy/\` - Omarchy shell (bar, themes, plugins)
+- \`omarchy/\` - Omarchy shell config (bar layout, plugins, **excludes themes** - from system)
 - \`foot/\`, \`kitty/\`, etc. - Terminal configs
 - \`starship/\`, \`btop/\`, etc. - App configs
-- \`current-theme.txt\` - Active theme name
+- \`current-theme.txt\` - Active theme name (will be re-applied from system themes)
 - \`omarchy-packages.txt\` - Key packages installed
 
 ## Restore on fresh install
-1. Run \`install-omarchy-on-cachy.sh\` first (installs packages)
+1. Run \`install-omarchy-on-cachy.sh\` first (installs packages + system themes)
 2. Run \`./restore.sh\` from this directory
 3. Re-login
 EOF
