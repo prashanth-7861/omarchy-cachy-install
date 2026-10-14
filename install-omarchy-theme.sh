@@ -93,25 +93,108 @@ install_core_packages() {
 }
 
 setup_hyprland_config() {
-    log "Setting up Hyprland config with Omarchy-style keybindings..."
+    log "Setting up Hyprland config with Omarchy-style keybindings (Lua-compatible)..."
     
     # Backup existing
     [[ -d ~/.config/hypr ]] && mv ~/.config/hypr ~/.config/hypr.backup.$(date +%s)
     
     mkdir -p ~/.config/hypr
     
-    # hyprland.conf - main config
+    # hyprland.conf - main config (Lua-based for theme integration)
     cat > ~/.config/hypr/hyprland.conf <<'EOF'
-# Omarchy-style Hyprland config (minimal, no branding)
+# Omarchy-style Hyprland config (Lua for theme integration)
+-- Load theme-provided Lua if exists (colors, gaps, etc.)
+local theme_ok, theme = pcall(dofile, os.getenv("HOME") .. "/.local/state/omarchy/current/theme/hyprland.lua")
+if not theme_ok then
+    theme = {}
+end
+
+-- Default values (overridden by theme)
+local gaps_in = theme.gaps_in or 5
+local gaps_out = theme.gaps_out or 10
+local border_size = theme.border_size or 2
+local rounding = theme.rounding or 8
+local blur_enabled = theme.blur_enabled ~= false
+local blur_size = theme.blur_size or 8
+local blur_passes = theme.blur_passes or 3
+local active_border = theme.active_border or "rgba(89b4faee) rgba(74c7ecee) 45deg"
+local inactive_border = theme.inactive_border or "rgba(313244ee)"
+
+-- Core settings
+general {
+    gaps_in = gaps_in
+    gaps_out = gaps_out
+    border_size = border_size
+    col.active_border = active_border
+    col.inactive_border = inactive_border
+    layout = dwindle
+    allow_tearing = false
+    animate_manual_resizes = true
+}
+
+decoration {
+    rounding = rounding
+    blur {
+        enabled = blur_enabled
+        size = blur_size
+        passes = blur_passes
+        new_optimizations = true
+    }
+    drop_shadow = true
+    shadow_range = 10
+    shadow_render_power = 3
+    col.shadow = theme.shadow_color or "rgba(1a1b26cc)"
+}
+
+animations {
+    enabled = true
+    bezier = myBezier, 0.05, 0.9, 0.1, 1.05
+    animation = windows, 1, 7, myBezier
+    animation = windowsOut, 1, 7, default, popin 80%
+    animation = border, 1, 10, default
+    animation = borderangle, 1, 8, default
+    animation = fade, 1, 7, default
+    animation = workspaces, 1, 6, default
+}
+
+dwindle {
+    pseudotile = true
+    preserve_split = true
+}
+
+master {
+    new_is_master = true
+    new_on_top = true
+}
+
+-- Input
+input {
+    kb_layout = us
+    kb_options = caps:escape
+    follow_mouse = 1
+    touchpad {
+        natural_scroll = true
+        tap_to_click = true
+        drag_lock = true
+        disable_while_typing = true
+    }
+    sensitivity = 0
+    accel_profile = flat
+}
+
+-- Monitor (auto)
+monitor = ,preferred,auto,auto
+monitor = ,highrr,auto,auto
+
+-- Source additional configs
 source = ~/.config/hypr/keybindings.conf
-source = ~/.config/hypr/monitors.conf
-source = ~/.config/hypr/input.conf
-source = ~/.config/hypr/looknfeel.conf
-source = ~/.config/hypr/autostart.conf
 source = ~/.config/hypr/windowrules.conf
+source = ~/.config/hypr/autostart.conf
+
+-- Theme can override more via hyprland.lua
 EOF
 
-    # keybindings.conf - Omarchy-style keybindings
+    # keybindings.conf (plain config, not Lua - keybindings don't need theming)
     cat > ~/.config/hypr/keybindings.conf <<'EOF'
 # Omarchy-style keybindings (Super = Mod4)
 $mainMod = SUPER
@@ -254,83 +337,15 @@ bind = $mainMod, Escape, exec, ~/.config/omarchy/launchers/power-menu.sh
 bind = $mainMod, C, exec, foot -e python3 -c "import sys; print(eval(sys.stdin.read()))"
 EOF
 
-    # monitors.conf
-    cat > ~/.config/hypr/monitors.conf <<'EOF'
-# Monitor config - auto-configure
-monitor = ,preferred,auto,auto
-monitor = ,highrr,auto,auto
-
-# Laptop lid
-switch_xkb_layout_on_lid_close = false
-EOF
-
-    # input.conf
-    cat > ~/.config/hypr/input.conf <<'EOF'
-input {
-    kb_layout = us
-    kb_variant = 
-    kb_model = 
-    kb_options = caps:escape
-    kb_rules = 
-    follow_mouse = 1
-    touchpad {
-        natural_scroll = true
-        tap-to-click = true
-        drag_lock = true
-        disable_while_typing = true
-    }
-    sensitivity = 0
-    accel_profile = flat
-}
-EOF
-
-    # looknfeel.conf - Omarchy-style appearance
-    cat > ~/.config/hypr/looknfeel.conf <<'EOF'
-general {
-    gaps_in = 5
-    gaps_out = 10
-    border_size = 2
-    col.active_border = rgba(89b4faee) rgba(74c7ecee) 45deg
-    col.inactive_border = rgba(313244ee)
-    layout = dwindle
-    allow_tearing = false
-    animate_manual_resizes = true
-}
-
-decoration {
-    rounding = 8
-    blur {
-        enabled = true
-        size = 8
-        passes = 3
-        new_optimizations = true
-    }
-    drop_shadow = true
-    shadow_range = 10
-    shadow_render_power = 3
-    col.shadow = rgba(1a1b26cc)
-}
-
-animations {
-    enabled = true
-    bezier = myBezier, 0.05, 0.9, 0.1, 1.05
-    animation = windows, 1, 7, myBezier
-    animation = windowsOut, 1, 7, default, popin 80%
-    animation = border, 1, 10, default
-    animation = borderangle, 1, 8, default
-    animation = fade, 1, 7, default
-    animation = workspaces, 1, 6, default
-}
-
-dwindle {
-    pseudotile = true
-    preserve_split = true
-}
-
-master {
-    new_is_master = true
-    new_on_top = true
-}
+    # windowrules.conf
+    cat > ~/.config/hypr/windowrules.conf <<'EOF'
+# Window rules
+windowrulev2 = float, class:^(pavucontrol|blueman-manager|nm-connection-editor)$
+windowrulev2 = float, title:^(Calculator|File Operation Progress)$
+windowrulev2 = size 800 600, class:^(pavucontrol|blueman-manager)$
+windowrulev2 = center, class:^(pavucontrol|blueman-manager)$
+windowrulev2 = opacity 0.95 0.95, class:.*
+windowrulev2 = nomaximize, class:^(pavucontrol)$
 EOF
 
     # autostart.conf
@@ -345,18 +360,7 @@ exec-once = blueman-applet
 exec-once = systemctl --user start pipewire wireplumber
 EOF
 
-    # windowrules.conf
-    cat > ~/.config/hypr/windowrules.conf <<'EOF'
-# Window rules
-windowrulev2 = float, class:^(pavucontrol|blueman-manager|nm-connection-editor)$
-windowrulev2 = float, title:^(Calculator|File Operation Progress)$
-windowrulev2 = size 800 600, class:^(pavucontrol|blueman-manager)$
-windowrulev2 = center, class:^(pavucontrol|blueman-manager)$
-windowrulev2 = opacity 0.95 0.95, class:.*
-windowrulev2 = nomaximize, class:^(pavucontrol)$
-EOF
-
-    success "Hyprland config created"
+    success "Hyprland config created (Lua-compatible for themes)"
 }
 
 setup_quickshell_bar() {
