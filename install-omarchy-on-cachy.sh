@@ -45,13 +45,20 @@ check_cachyos() {
 }
 
 add_omarchy_repo() {
-    log "Adding Omarchy repository..."
+    log "Adding Omarchy repository (pkgs.omarchy.org)..."
     
-    if ! grep -q "omarchy" /etc/pacman.conf; then
+    # Remove old repo if exists
+    if grep -q "packages.omarchy.org" /etc/pacman.conf; then
+        log "Removing old Omarchy repo URL..."
+        sudo sed -i '/packages\.omarchy\.org/d' /etc/pacman.conf
+        sudo sed -i '/^\[omarchy\]/,/^\[/ { /^\[omarchy\]/d; /^Server =/d; /^SigLevel =/d; /^$/d }' /etc/pacman.conf
+    fi
+    
+    if ! grep -q "pkgs.omarchy.org" /etc/pacman.conf; then
         sudo tee -a /etc/pacman.conf > /dev/null <<'EOF'
 
 [omarchy]
-Server = https://packages.omarchy.org/$arch
+Server = https://pkgs.omarchy.org/stable/$arch
 SigLevel = Required DatabaseOptional
 EOF
         success "Omarchy repo added to pacman.conf"
@@ -63,6 +70,22 @@ EOF
     sudo pacman-key --recv-keys 3C8C1E8F1B5A4F7E 2>/dev/null || true
     sudo pacman-key --lsign-key 3C8C1E8F1B5A4F7E 2>/dev/null || true
     sudo pacman -Sy --noconfirm omarchy-keyring 2>/dev/null || true
+}
+
+disable_plasma() {
+    log "Disabling Plasma/KDE services..."
+    
+    # Disable SDDM if it's for Plasma (we'll re-enable for Hyprland)
+    sudo systemctl disable sddm 2>/dev/null || true
+    
+    # Mask Plasma-specific services
+    sudo systemctl mask plasma-polkit-agent 2>/dev/null || true
+    sudo systemctl mask plasma-powerdevil 2>/dev/null || true
+    
+    # Remove plasma-session if installed (optional - comment out if you want to keep Plasma)
+    # sudo pacman -Rns --noconfirm plasma-desktop plasma-workspace 2>/dev/null || true
+    
+    success "Plasma services disabled"
 }
 
 install_packages() {
@@ -83,7 +106,11 @@ install_packages() {
         # Shell / Bar
         quickshell
         
-        # Terminals (pick one or install all)
+        # Display manager (SDDM with Hyprland session)
+        sddm
+        qt6-base
+        
+        # Terminals
         foot
         kitty
         alacritty
@@ -105,9 +132,8 @@ install_packages() {
         hyprlock
         hypridle
         hyprsunset
-        waybar
         mako
-        polkit-kde-agent
+        polkit-gnome
         
         # Fonts
         noto-fonts
@@ -134,7 +160,7 @@ install_packages() {
         gvfs
         gvfs-mtp
         
-        # Development (optional)
+        # Development
         neovim
         tmux
         zsh
@@ -155,12 +181,58 @@ install_packages() {
     success "Packages installed"
 }
 
+setup_hyprland_session() {
+    log "Setting up Hyprland session for SDDM..."
+    
+    # Create Hyprland desktop entry for SDDM
+    sudo tee /usr/share/wayland-sessions/hyprland.desktop > /dev/null <<'EOF'
+[Desktop Entry]
+Name=Hyprland
+Comment=An intelligent dynamic tiling Wayland compositor
+Exec=Hyprland
+Type=Application
+DesktopNames=Hyprland
+EOF
+
+    # Also create a user-level one (takes precedence)
+    mkdir -p ~/.local/share/wayland-sessions
+    cp /usr/share/wayland-sessions/hyprland.desktop ~/.local/share/wayland-sessions/
+
+    success "Hyprland session created for SDDM"
+}
+
+configure_sddm() {
+    log "Configuring SDDM for Hyprland..."
+    
+    # Ensure SDDM config directory exists
+    sudo mkdir -p /etc/sddm.conf.d
+    
+    # Create SDDM config for Wayland + Hyprland
+    sudo tee /etc/sddm.conf.d/hyprland.conf > /dev/null <<'EOF'
+[General]
+DisplayServer=wayland
+GreeterEnvironment=QT_WAYLAND_DISABLE_WINDOWDECORATION=1,WAYLAND_DISPLAY=wayland-0
+SessionCommand=/usr/share/sddm/scripts/wayland-session
+SessionDir=/usr/share/wayland-sessions
+UserSessionDir=~/.local/share/wayland-sessions
+
+[Theme]
+Current=breeze
+EOF
+
+    # Set proper permissions for SDDM
+    sudo chown -R sddm:sddm /var/lib/sddm 2>/dev/null || true
+    sudo chmod 700 /var/lib/sddm 2>/dev/null || true
+
+    success "SDDM configured for Wayland/Hyprland"
+}
+
 enable_services() {
     log "Enabling system services..."
     
     sudo systemctl enable --now NetworkManager 2>/dev/null || true
     sudo systemctl enable --now bluetooth 2>/dev/null || true
-    sudo systemctl enable --now sddm 2>/dev/null || warn "SDDM not installed, you'll need a display manager"
+    sudo systemctl enable --now sddm 2>/dev/null || warn "SDDM enable failed"
     
     # User services
     systemctl --user enable --now pipewire pipewire-pulse wireplumber 2>/dev/null || true
@@ -205,7 +277,16 @@ setup_configs() {
 setup_shell_integration() {
     log "Setting up shell integration..."
     
-    # Add omarchy to PATH if needed (should be automatic via package)
+    # Set zsh as default shell if installed
+    if command -v zsh >/dev/null 2>&1; then
+        current_shell=$(getent passwd "$USER" | cut -d: -f7)
+        if [[ "$current_shell" != *"zsh" ]]; then
+            log "Setting zsh as default shell..."
+            sudo chsh -s "$(which zsh)" "$USER"
+        fi
+    fi
+    
+    # Add omarchy completions
     if ! grep -q 'omarchy' ~/.bashrc 2>/dev/null; then
         echo 'eval "$(omarchy completion bash 2>/dev/null)"' >> ~/.bashrc
     fi
@@ -217,30 +298,10 @@ setup_shell_integration() {
     success "Shell integration added"
 }
 
-setup_greetd() {
-    log "Setting up greetd (login manager) - optional but recommended..."
-    
-    if pacman -Qs greetd >/dev/null 2>&1; then
-        log "greetd already installed"
-        return
-    fi
-    
-    read -p "Install greetd (minimal login manager) instead of SDDM? [y/N] " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        sudo pacman -S --noconfirm greetd greetd-tuigreet
-        sudo systemctl disable sddm 2>/dev/null || true
-        sudo systemctl enable --now greetd
-        success "greetd installed and enabled"
-    else
-        log "Keeping SDDM (or your current DM)"
-    fi
-}
-
 post_install() {
     log "Running post-install setup..."
     
-    # Refresh all configs to ensure they're current
+    # Refresh all configs
     omarchy refresh config 2>/dev/null || true
     
     # Generate font cache
@@ -249,12 +310,11 @@ post_install() {
     # Update MIME database
     update-desktop-database ~/.local/share/applications 2>/dev/null || true
     
-    # Set up Hyprland autostart if not present
+    # Set up Hyprland autostart
     if [[ ! -f ~/.config/hypr/autostart.conf ]]; then
         cat > ~/.config/hypr/autostart.conf <<'EOF'
 # Omarchy autostart
 exec-once = hyprpaper
-exec-once = waybar &
 exec-once = mako &
 exec-once = udiskie &
 exec-once = nm-applet --indicator &
@@ -262,6 +322,13 @@ exec-once = blueman-applet &
 EOF
         log "Created Hyprland autostart.conf"
     fi
+    
+    # Ensure user dirs exist
+    mkdir -p ~/.local/share/wayland-sessions
+    mkdir -p ~/.config/environment.d
+    
+    # Set QT_QPA_PLATFORM for Wayland
+    echo 'QT_QPA_PLATFORM=wayland' | tee ~/.config/environment.d/qt-wayland.conf >/dev/null
     
     success "Post-install complete"
 }
@@ -280,6 +347,7 @@ ${BLUE}What was installed:${NC}
   • Foot/Kitty/Alacritty/Ghostty terminals
   • Nautilus file manager, btop, fastfetch, lazygit
   • Pipewire audio, NetworkManager, Bluetooth
+  • SDDM display manager (configured for Wayland/Hyprland)
 
 ${BLUE}Key commands:${NC}
   omarchy theme list              # List all themes
@@ -298,11 +366,13 @@ ${BLUE}Config locations:${NC}
   ~/.config/kitty/kitty.conf      # Kitty terminal
 
 ${BLUE}Next steps:${NC}
-  1. ${YELLOW}Reboot or re-login${NC} to start Hyprland session
-  2. Select "Hyprland" at login screen (SDDM/greetd)
+  1. ${YELLOW}Reboot${NC} (required for SDDM + shell change)
+  2. At login screen, click session selector → choose "${GREEN}Hyprland${NC}"
   3. Run ${GREEN}omarchy theme switcher${NC} to pick a theme
   4. Run ${GREEN}omarchy menu${NC} or press ${YELLOW}Super+Space${NC} for app launcher
   5. Customize keybindings in ${YELLOW}~/.config/hypr/bindings.lua${NC}
+
+${RED}Important:${NC} You MUST reboot for SDDM and shell changes to take effect.
 
 ${BLUE}Log file:${NC} $LOG_FILE
 
@@ -316,11 +386,13 @@ main() {
     check_root
     check_cachyos
     add_omarchy_repo
+    disable_plasma
     install_packages
+    setup_hyprland_session
+    configure_sddm
     enable_services
     setup_configs
     setup_shell_integration
-    setup_greetd
     post_install
     print_summary
 }
